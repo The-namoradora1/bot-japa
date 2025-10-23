@@ -1,6 +1,6 @@
-// bot.js - Versão corrigida (CommonJS)
+// bot.js - QR no navegador
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode');
 const express = require('express');
 
 const app = express();
@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 3000;
 // Configurações
 const BLOCK_SIZE = 250;
 const DELAY_MS = 1000;
+let qrCodeData = null; // Guarda o QR atual
 
 // Funções auxiliares
 function sleep(ms) {
@@ -28,10 +29,14 @@ const client = new Client({
   authStrategy: new LocalAuth()
 });
 
-// QR no terminal
-client.on('qr', qr => {
-  qrcode.generate(qr, { small: true });
-  console.log('📲 Escaneie o QR acima para conectar o WhatsApp');
+// QR atualizado
+client.on('qr', async qr => {
+  try {
+    qrCodeData = await qrcode.toDataURL(qr); // converte QR para DataURL
+    console.log('📲 QR atualizado, abra a página para escanear!');
+  } catch (e) {
+    console.error('[ERROR qr gen]:', e);
+  }
 });
 
 // Quando o client estiver pronto
@@ -48,7 +53,6 @@ client.on('message', async msg => {
     const isAdmin = participants.find(p => p.id && p.id._serialized === sender.id._serialized)?.isAdmin;
     const body = (msg.body || '').trim();
 
-    // Mensagens privadas
     if (!chat.isGroup) {
       return msg.reply('Olá! Para assuntos relacionados ao bot, fale diretamente com o criador: wa.me/5511977018088');
     }
@@ -67,7 +71,7 @@ client.on('message', async msg => {
       );
     }
 
-    // Valida admin
+    // valida admin
     const mustBeAdmin = body.startsWith('!even') ||
                          body.toLowerCase().startsWith('!anuncio') ||
                          body === '!sorteio' ||
@@ -180,6 +184,15 @@ client.on('message', async msg => {
 // Inicializa o client
 client.initialize();
 
-// --- Rota HTTP para healthcheck ---
-app.get('/', (req, res) => res.send('Bot ativo'));
-app.listen(PORT, () => console.log(`🌐 HTTP server listening on port ${PORT}`));
+// --- Rotas HTTP ---
+app.get('/', (req, res) => {
+  if (!qrCodeData) {
+    return res.send('<h2>Bot ativo! QR ainda não gerado...</h2>');
+  }
+  res.send(`
+    <h2>📲 Escaneie o QR abaixo para conectar</h2>
+    <img src="${qrCodeData}" />
+  `);
+});
+
+app.listen(PORT, () => console.log(`🌐 Servidor rodando em http://localhost:${PORT}`));
