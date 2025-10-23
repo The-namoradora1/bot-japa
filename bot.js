@@ -1,17 +1,21 @@
-// bot.js - QR no navegador
+// bot.js - QR no navegador com atualização automática
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
 const PORT = process.env.PORT || 3000;
 
 // Configurações
 const BLOCK_SIZE = 250;
 const DELAY_MS = 1000;
-let qrCodeData = null; // Guarda o QR atual
 
-// Funções auxiliares
+// Helpers
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -24,24 +28,39 @@ function dividirEmBlocos(array, tamanho) {
   return res;
 }
 
+// NEW: remove duplicates preserving order (por id._serialized)
+function uniqueContacts(contacts) {
+  const seen = new Set();
+  const res = [];
+  for (const c of contacts) {
+    const id = c && c.id && c.id._serialized;
+    if (!id) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    res.push(c);
+  }
+  return res;
+}
+
 // Inicializa o client
 const client = new Client({
   authStrategy: new LocalAuth()
 });
 
-// QR atualizado
+// QR code: envia via socket
 client.on('qr', async qr => {
   try {
-    qrCodeData = await qrcode.toDataURL(qr); // converte QR para DataURL
-    console.log('📲 QR atualizado, abra a página para escanear!');
+    const qrDataUrl = await qrcode.toDataURL(qr);
+    console.log('📲 QR atualizado!');
+    io.emit('qr', qrDataUrl); // envia para todos os clientes conectados
   } catch (e) {
     console.error('[ERROR qr gen]:', e);
   }
 });
 
-// Quando o client estiver pronto
 client.on('ready', () => {
   console.log('✅ Bot conectado e pronto!');
+  io.emit('ready'); // avisa ao navegador que o bot está pronto
 });
 
 // --- Handler de mensagens ---
@@ -57,7 +76,6 @@ client.on('message', async msg => {
       return msg.reply('Olá! Para assuntos relacionados ao bot, fale diretamente com o criador: wa.me/5511977018088');
     }
 
-    // HELP
     if (body === '!help') {
       return msg.reply(
 `🧠 Comandos:
@@ -71,7 +89,6 @@ client.on('message', async msg => {
       );
     }
 
-    // valida admin
     const mustBeAdmin = body.startsWith('!even') ||
                          body.toLowerCase().startsWith('!anuncio') ||
                          body === '!sorteio' ||
@@ -82,26 +99,24 @@ client.on('message', async msg => {
     // !even
     if (body === '!even') {
       const participantesInvertidos = [...participants].reverse();
-      const mentions = [];
+      const mentionsRaw = [];
       for (const p of participantesInvertidos) {
-        try {
-          const contact = await client.getContactById(p.id._serialized);
-          mentions.push(contact);
-        } catch (e) {
-          console.warn('[WARN] falha em obter contato', p.id && p.id._serialized, e.message || e);
-        }
+        try { mentionsRaw.push(await client.getContactById(p.id._serialized)); }
+        catch (e) { console.warn('[WARN] falha em obter contato', p.id && p.id._serialized); }
       }
+      // remove duplicados mantendo ordem
+      const mentions = uniqueContacts(mentionsRaw);
       if (mentions.length === 0) return msg.reply('⚠️ Não foi possível coletar participantes.');
-      await chat.sendMessage('🚨 Atenção, comunicado para todos!');
+      await chat.sendMessage(`🚨 Atenção, comunicado para todos! Total: ${mentions.length}`);
       const blocos = dividirEmBlocos(mentions, BLOCK_SIZE);
       for (let i = 0; i < blocos.length; i++) {
-        await chat.sendMessage(blocos[i].map(c => `@${c.number}`).join(' '), { mentions: blocos[i] });
-        console.log(`✅ !even bloco ${i + 1}/${blocos.length} enviado (${blocos[i].length})`);
+        const header = blocos.length > 1 ? `(${i + 1}/${blocos.length}) ` : '';
+        await chat.sendMessage(header + blocos[i].map(c => `@${c.number}`).join(' '), { mentions: blocos[i] });
         if (i < blocos.length - 1) await sleep(DELAY_MS);
       }
       return;
     }
-
+    
     // !anuncio
     if (body.toLowerCase().startsWith('!anuncio')) {
       let texto = body.slice('!anuncio'.length).trim();
@@ -110,11 +125,13 @@ client.on('message', async msg => {
       if (texto.startsWith('-b ')) { isBroadcast = true; texto = texto.slice(3).trim(); }
 
       const participantesInvertidos = [...participants].reverse();
-      const mentions = [];
+      const mentionsRaw = [];
       for (const p of participantesInvertidos) {
-        try { mentions.push(await client.getContactById(p.id._serialized)); }
+        try { mentionsRaw.push(await client.getContactById(p.id._serialized)); }
         catch (e) { console.warn('[WARN] contato fail', p.id && p.id._serialized); }
       }
+      // remove duplicados mantendo ordem
+      const mentions = uniqueContacts(mentionsRaw);
       if (mentions.length === 0) return msg.reply('⚠️ Não foi possível coletar participantes.');
 
       if (isBroadcast) {
@@ -124,17 +141,16 @@ client.on('message', async msg => {
             await client.sendMessage(mentions[i].id._serialized, `📢 *Anúncio:*\n\n${texto}`);
             if ((i + 1) % 20 === 0) await sleep(800); else await sleep(200);
           } catch (e) {
-            console.warn('[WARN] falha ao enviar DM para', mentions[i].number, e.message || e);
             await sleep(400);
           }
         }
         return msg.reply(`✅ Broadcast concluído: enviado para ${mentions.length} contatos.`);
       } else {
-        await chat.sendMessage(`📢 *Anúncio Importante!*\n\n${texto}`);
+        await chat.sendMessage(`📢 *Anúncio Importante!*\n\n${texto}\n\nTotal: ${mentions.length}`);
         const blocos = dividirEmBlocos(mentions, BLOCK_SIZE);
         for (let i = 0; i < blocos.length; i++) {
-          await chat.sendMessage(blocos[i].map(c => `@${c.number}`).join(' '), { mentions: blocos[i] });
-          console.log(`✅ Anúncio bloco ${i + 1}/${blocos.length}`);
+          const header = blocos.length > 1 ? `(${i + 1}/${blocos.length}) ` : '';
+          await chat.sendMessage(header + blocos[i].map(c => `@${c.number}`).join(' '), { mentions: blocos[i] });
           if (i < blocos.length - 1) await sleep(DELAY_MS);
         }
         return msg.reply(`✅ Anúncio enviado para ${mentions.length} participantes.`);
@@ -163,7 +179,7 @@ client.on('message', async msg => {
       return;
     }
 
-    // !ban @usuário
+    // !ban
     if (body.toLowerCase().startsWith('!ban')) {
       if (!msg.mentionedIds || msg.mentionedIds.length === 0) return msg.reply('❌ Use: !ban @usuário');
       const alvo = msg.mentionedIds[0];
@@ -171,13 +187,12 @@ client.on('message', async msg => {
         await chat.removeParticipants([alvo]);
         return msg.reply('✅ Usuário removido do grupo.');
       } catch (e) {
-        console.error('[ERROR !ban]:', e);
         return msg.reply('❌ Não foi possível remover o usuário. Verifique permissões do bot.');
       }
     }
 
   } catch (err) {
-    console.error('[ERROR handler message]:', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    console.error(err);
   }
 });
 
@@ -186,13 +201,20 @@ client.initialize();
 
 // --- Rotas HTTP ---
 app.get('/', (req, res) => {
-  if (!qrCodeData) {
-    return res.send('<h2>Bot ativo! QR ainda não gerado...</h2>');
-  }
   res.send(`
-    <h2>📲 Escaneie o QR abaixo para conectar</h2>
-    <img src="${qrCodeData}" />
+    <h2>📲 Bot Ativo!</h2>
+    <p>Escaneie o QR abaixo (será atualizado automaticamente):</p>
+    <img id="qrcode" style="width:250px;height:250px;">
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const img = document.getElementById('qrcode');
+      socket.on('qr', data => { img.src = data; });
+      socket.on('ready', () => {
+        document.body.innerHTML = '<h2>✅ Bot conectado e pronto!</h2>';
+      });
+    </script>
   `);
 });
 
-app.listen(PORT, () => console.log(`🌐 Servidor rodando em http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`🌐 Servidor rodando em http://localhost:${PORT}`));
