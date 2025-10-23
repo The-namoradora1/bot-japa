@@ -1,24 +1,42 @@
-import { Client, LocalAuth } from 'whatsapp-web.js';
-import qrcode from 'qrcode';
+// bot.js - Versão corrigida (CommonJS)
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 // Configurações
 const BLOCK_SIZE = 250;
 const DELAY_MS = 1000;
 
-const client = new Client({ authStrategy: new LocalAuth() }); // <- deve vir antes de usar client
+// Funções auxiliares
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-// QR
-client.on('qr', async qr => {
-  try {
-    const qrStr = await qrcode.toString(qr, { type: 'terminal' });
-    console.log(qrStr);
-  } catch (e) {
-    console.error('[ERROR qr gen]:', e);
+function dividirEmBlocos(array, tamanho) {
+  const res = [];
+  for (let i = 0; i < array.length; i += tamanho) {
+    res.push(array.slice(i, i + tamanho));
   }
+  return res;
+}
+
+// Inicializa o client
+const client = new Client({
+  authStrategy: new LocalAuth()
 });
 
+// QR no terminal
+client.on('qr', qr => {
+  qrcode.generate(qr, { small: true });
+  console.log('📲 Escaneie o QR acima para conectar o WhatsApp');
+});
+
+// Quando o client estiver pronto
 client.on('ready', () => {
-  console.log('Client is ready');
+  console.log('✅ Bot conectado e pronto!');
 });
 
 // --- Handler de mensagens ---
@@ -49,8 +67,12 @@ client.on('message', async msg => {
       );
     }
 
-    // valida admin
-    const mustBeAdmin = body.startsWith('!even') || body.toLowerCase().startsWith('!anuncio') || body === '!sorteio' || body.toLowerCase().startsWith('!num') || body.toLowerCase().startsWith('!ban');
+    // Valida admin
+    const mustBeAdmin = body.startsWith('!even') ||
+                         body.toLowerCase().startsWith('!anuncio') ||
+                         body === '!sorteio' ||
+                         body.toLowerCase().startsWith('!num') ||
+                         body.toLowerCase().startsWith('!ban');
     if (mustBeAdmin && !isAdmin) return msg.reply('❌ Apenas administradores podem usar este comando.');
 
     // !even
@@ -76,7 +98,7 @@ client.on('message', async msg => {
       return;
     }
 
-    // !anuncio (opcional -b)
+    // !anuncio
     if (body.toLowerCase().startsWith('!anuncio')) {
       let texto = body.slice('!anuncio'.length).trim();
       if (!texto) return msg.reply('📝 Use: !anuncio [-b] Seu texto aqui');
@@ -139,7 +161,6 @@ client.on('message', async msg => {
 
     // !ban @usuário
     if (body.toLowerCase().startsWith('!ban')) {
-      // espera menção
       if (!msg.mentionedIds || msg.mentionedIds.length === 0) return msg.reply('❌ Use: !ban @usuário');
       const alvo = msg.mentionedIds[0];
       try {
@@ -156,18 +177,9 @@ client.on('message', async msg => {
   }
 });
 
-// Helpers
-function dividirEmBlocos(array, tamanho) {
-  const res = [];
-  for (let i = 0; i < array.length; i += tamanho) {
-    res.push(array.slice(i, i + tamanho));
-  }
-  return res;
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Inicia o client
+// Inicializa o client
 client.initialize();
+
+// --- Rota HTTP para healthcheck ---
+app.get('/', (req, res) => res.send('Bot ativo'));
+app.listen(PORT, () => console.log(`🌐 HTTP server listening on port ${PORT}`));
