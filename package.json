@@ -1,18 +1,14 @@
 {
-  "name": "bot-whatsapp",
+  "name": "bot-zap",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Bot de WhatsApp automatizado",
+  "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node bot.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
+    "express": "^4.18.2",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.1"
+    "whatsapp-web.js": "^1.23.0"
   }
 }
