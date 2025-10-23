@@ -1,9 +1,33 @@
+import { Client, LocalAuth } from 'whatsapp-web.js';
+import qrcode from 'qrcode';
+
+// Configurações
+const BLOCK_SIZE = 250;
+const DELAY_MS = 1000;
+
+const client = new Client({ authStrategy: new LocalAuth() }); // <- deve vir antes de usar client
+
+// QR
+client.on('qr', async qr => {
+  try {
+    const qrStr = await qrcode.toString(qr, { type: 'terminal' });
+    console.log(qrStr);
+  } catch (e) {
+    console.error('[ERROR qr gen]:', e);
+  }
+});
+
+client.on('ready', () => {
+  console.log('Client is ready');
+});
+
 // --- Handler de mensagens ---
 client.on('message', async msg => {
   try {
     const chat = await msg.getChat();
     const sender = await msg.getContact();
-    const isAdmin = chat.participants.find(p => p.id._serialized === sender.id._serialized)?.isAdmin;
+    const participants = chat.participants || [];
+    const isAdmin = participants.find(p => p.id && p.id._serialized === sender.id._serialized)?.isAdmin;
     const body = (msg.body || '').trim();
 
     // Mensagens privadas
@@ -31,14 +55,14 @@ client.on('message', async msg => {
 
     // !even
     if (body === '!even') {
-      const participantesInvertidos = [...chat.participants].reverse();
+      const participantesInvertidos = [...participants].reverse();
       const mentions = [];
       for (const p of participantesInvertidos) {
         try {
           const contact = await client.getContactById(p.id._serialized);
           mentions.push(contact);
         } catch (e) {
-          console.warn('[WARN] falha em obter contato', p.id._serialized, e.message || e);
+          console.warn('[WARN] falha em obter contato', p.id && p.id._serialized, e.message || e);
         }
       }
       if (mentions.length === 0) return msg.reply('⚠️ Não foi possível coletar participantes.');
@@ -59,11 +83,11 @@ client.on('message', async msg => {
       let isBroadcast = false;
       if (texto.startsWith('-b ')) { isBroadcast = true; texto = texto.slice(3).trim(); }
 
-      const participantesInvertidos = [...chat.participants].reverse();
+      const participantesInvertidos = [...participants].reverse();
       const mentions = [];
       for (const p of participantesInvertidos) {
         try { mentions.push(await client.getContactById(p.id._serialized)); }
-        catch (e) { console.warn('[WARN] contato fail', p.id._serialized); }
+        catch (e) { console.warn('[WARN] contato fail', p.id && p.id._serialized); }
       }
       if (mentions.length === 0) return msg.reply('⚠️ Não foi possível coletar participantes.');
 
@@ -93,8 +117,8 @@ client.on('message', async msg => {
 
     // !sorteio
     if (body === '!sorteio') {
-      const nonAdmins = chat.participants.filter(p => !p.isAdmin);
-      const pool = nonAdmins.length ? nonAdmins : chat.participants;
+      const nonAdmins = participants.filter(p => !p.isAdmin);
+      const pool = nonAdmins.length ? nonAdmins : participants;
       const sorteado = pool[Math.floor(Math.random() * pool.length)];
       const contato = await client.getContactById(sorteado.id._serialized);
       await chat.sendMessage(`🎉 *SORTEIO!* 🎉\nO vencedor(a) é: @${contato.number}`, { mentions: [contato] });
@@ -132,3 +156,18 @@ client.on('message', async msg => {
   }
 });
 
+// Helpers
+function dividirEmBlocos(array, tamanho) {
+  const res = [];
+  for (let i = 0; i < array.length; i += tamanho) {
+    res.push(array.slice(i, i + tamanho));
+  }
+  return res;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Inicia o client
+client.initialize();
