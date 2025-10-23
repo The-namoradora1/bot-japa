@@ -1,50 +1,3 @@
-// bot.js
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode');
-const express = require('express');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Configs de bloco/delay
-const BLOCK_SIZE = 250;
-const DELAY_MS = 1000;
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-function dividirEmBlocos(array, tamanho) {
-  const chunk = [];
-  for (let i = 0; i < array.length; i += tamanho) {
-    chunk.push(array.slice(i, i + tamanho));
-  }
-  return chunk;
-}
-
-const client = new Client({
-  authStrategy: new LocalAuth()
-});
-
-let qrCodeDataUrl = null; // QR Code em base64
-
-client.on('qr', async qr => {
-  console.log('📲 QR gerado!');
-  qrCodeDataUrl = await qrcode.toDataURL(qr);
-});
-
-client.on('ready', () => {
-  console.log('✅ Bot conectado!');
-});
-
-client.on('auth_failure', msg => {
-  console.error('🔴 Falha na autenticação:', msg);
-});
-
-client.on('disconnected', reason => {
-  console.warn('⚠️ Desconectado:', reason);
-});
-
 // --- Handler de mensagens ---
 client.on('message', async msg => {
   try {
@@ -67,12 +20,13 @@ client.on('message', async msg => {
 * !anuncio -b Texto -> Envia por DM (broadcast)
 * !sorteio -> Sorteia um membro (prefere não-admins)
 * !num X a Y -> Sorteia número
+* !ban @usuário -> Remove o participante do grupo
 (Somente administradores para comandos de marcação)`
       );
     }
 
     // valida admin
-    const mustBeAdmin = body.startsWith('!even') || body.toLowerCase().startsWith('!anuncio') || body === '!sorteio' || body.toLowerCase().startsWith('!num');
+    const mustBeAdmin = body.startsWith('!even') || body.toLowerCase().startsWith('!anuncio') || body === '!sorteio' || body.toLowerCase().startsWith('!num') || body.toLowerCase().startsWith('!ban');
     if (mustBeAdmin && !isAdmin) return msg.reply('❌ Apenas administradores podem usar este comando.');
 
     // !even
@@ -159,24 +113,21 @@ client.on('message', async msg => {
       return;
     }
 
+    // !ban @usuário
+    if (body.toLowerCase().startsWith('!ban')) {
+      // espera menção
+      if (!msg.mentionedIds || msg.mentionedIds.length === 0) return msg.reply('❌ Use: !ban @usuário');
+      const alvo = msg.mentionedIds[0];
+      try {
+        await chat.removeParticipants([alvo]);
+        return msg.reply('✅ Usuário removido do grupo.');
+      } catch (e) {
+        console.error('[ERROR !ban]:', e);
+        return msg.reply('❌ Não foi possível remover o usuário. Verifique permissões do bot.');
+      }
+    }
+
   } catch (err) {
     console.error('[ERROR handler message]:', err && (err.stack || err.message) ? (err.stack || err.message) : err);
   }
 });
-
-client.initialize();
-
-// --- ROTA HTTP para healthcheck e QR ---
-app.get('/', (req, res) => {
-  if (qrCodeDataUrl) {
-    res.send(`
-      <h1>Bot ativo</h1>
-      <p>📲 Escaneie o QR Code para conectar o WhatsApp:</p>
-      <img src="${qrCodeDataUrl}" />
-    `);
-  } else {
-    res.send('<h1>Bot ativo</h1><p>QR Code ainda não gerado...</p>');
-  }
-});
-
-app.listen(PORT, () => console.log(`🌐 HTTP server listening on port ${PORT}`));
